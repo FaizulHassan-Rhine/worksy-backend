@@ -1,7 +1,12 @@
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 
-const UPLOAD_DIR = path.join(__dirname, '../../uploads');
+// Vercel serverless: use /tmp (ephemeral). Local: use project uploads folder.
+const UPLOAD_DIR = process.env.VERCEL
+  ? path.join(os.tmpdir(), 'worksy-uploads')
+  : path.join(__dirname, '../../uploads');
+
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
 
 const ALLOWED_MIME_TYPES = [
@@ -41,8 +46,12 @@ const getFileCategory = (mimeType) => {
 };
 
 const ensureUploadDir = () => {
-  if (!fs.existsSync(UPLOAD_DIR)) {
-    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+  try {
+    if (!fs.existsSync(UPLOAD_DIR)) {
+      fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+    }
+  } catch (error) {
+    console.warn(`Upload directory unavailable: ${error.message}`);
   }
 };
 

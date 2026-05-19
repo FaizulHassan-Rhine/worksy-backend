@@ -1,5 +1,4 @@
 const express = require('express');
-const path = require('path');
 const cors = require('cors');
 const helmet = require('helmet');
 const morgan = require('morgan'); 
@@ -13,11 +12,17 @@ const noteRoutes = require('./routes/noteRoutes');
 const fileRoutes = require('./routes/fileRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const messageRoutes = require('./routes/messageRoutes');
-const { ensureUploadDir } = require('./config/upload');
+
+const { UPLOAD_DIR, ensureUploadDir } = require('./config/upload');
 
 ensureUploadDir();
 
 const app = express();
+
+const allowedOrigins = (process.env.CLIENT_URL || 'http://localhost:3000')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 app.use(
   helmet({
@@ -26,14 +31,22 @@ app.use(
 );
 app.use(
   cors({
-    origin: process.env.CLIENT_URL || 'http://localhost:3000',
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error('Not allowed by CORS'));
+    },
     credentials: true,
   })
 );
 app.use(express.json());
-app.use(morgan('dev'));
 
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
+if (process.env.NODE_ENV !== 'production') {
+  app.use(morgan('dev'));
+}
+
+app.use('/uploads', express.static(UPLOAD_DIR));
 
 app.get('/api/health', (req, res) => {
   return ok(res, { status: 'ok', timestamp: new Date().toISOString() }, 'API is healthy');
