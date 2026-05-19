@@ -48,6 +48,40 @@ if (process.env.NODE_ENV !== 'production') {
 
 app.use('/uploads', express.static(UPLOAD_DIR));
 
+app.get('/', (req, res) => {
+  return ok(
+    res,
+    {
+      name: 'Worksy API',
+      status: 'running',
+      health: '/api/health',
+      basePath: '/api',
+    },
+    'Worksy API is running'
+  );
+});
+
+app.get('/api', (req, res) => {
+  return ok(
+    res,
+    {
+      status: 'ok',
+      endpoints: {
+        health: '/api/health',
+        auth: '/api/auth',
+        workspaces: '/api/workspaces',
+        projects: '/api/projects',
+        tasks: '/api/tasks',
+        notes: '/api/notes',
+        files: '/api/files',
+        dashboard: '/api/dashboard',
+        messages: '/api/messages',
+      },
+    },
+    'Worksy API'
+  );
+});
+
 app.get('/api/health', (req, res) => {
   return ok(res, { status: 'ok', timestamp: new Date().toISOString() }, 'API is healthy');
 });
