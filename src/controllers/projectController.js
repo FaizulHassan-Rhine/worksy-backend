@@ -8,6 +8,15 @@ const {
   canEditProject,
   canDeleteProject,
 } = require('../services/projectService');
+const { logActivity } = require('../services/activityService');
+
+const runActivityJob = async (job) => {
+  try {
+    await job();
+  } catch (error) {
+    console.error('Activity job failed:', error.message);
+  }
+};
 
 const createSchema = z.object({
   title: z.string().trim().min(1, 'Title is required').max(150),
@@ -48,6 +57,21 @@ const createProject = async (req, res, next) => {
       status: body.status || 'planning',
       color: body.color || 'blue',
       icon: body.icon || 'folder-kanban',
+    });
+
+    await runActivityJob(async () => {
+      await logActivity({
+        workspaceId: workspace._id,
+        actorId: req.user._id,
+        action: 'project_created',
+        entityType: 'project',
+        entityId: project._id,
+        title: 'Project created',
+        details: project.title,
+        metadata: {
+          status: project.status,
+        },
+      });
     });
 
     return ok(res, { project: project.toSafeObject() }, 'Project created', 201);
@@ -101,6 +125,21 @@ const updateProject = async (req, res, next) => {
 
     await req.project.save();
 
+    await runActivityJob(async () => {
+      await logActivity({
+        workspaceId: req.workspace._id,
+        actorId: req.user._id,
+        action: 'project_updated',
+        entityType: 'project',
+        entityId: req.project._id,
+        title: 'Project updated',
+        details: req.project.title,
+        metadata: {
+          status: req.project.status,
+        },
+      });
+    });
+
     return ok(res, { project: req.project.toSafeObject() }, 'Project updated');
   } catch (error) {
     next(error);
@@ -113,7 +152,21 @@ const deleteProject = async (req, res, next) => {
       return fail(res, 403, 'You do not have permission to delete this project');
     }
 
+    const projectTitle = req.project.title;
+    const projectId = req.project._id;
     await req.project.deleteOne();
+
+    await runActivityJob(async () => {
+      await logActivity({
+        workspaceId: req.workspace._id,
+        actorId: req.user._id,
+        action: 'project_deleted',
+        entityType: 'project',
+        entityId: projectId,
+        title: 'Project deleted',
+        details: projectTitle,
+      });
+    });
 
     return ok(res, null, 'Project deleted');
   } catch (error) {

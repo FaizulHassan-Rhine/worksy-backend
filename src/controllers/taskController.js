@@ -14,6 +14,8 @@ const {
   fetchAssigneeMap,
   formatTasksWithAssignees,
 } = require('../services/taskService');
+const { notifyTaskAssigned, notifyTaskDueSignals } = require('../services/notificationService');
+const { logActivity } = require('../services/activityService');
 
 const checklistItemSchema = z.object({
   text: z.string().trim().min(1).max(500),
@@ -52,6 +54,22 @@ const statusSchema = z.object({
 const assignSchema = z.object({
   assignee: z.string().optional().nullable(),
 });
+
+const runNotificationJob = async (job) => {
+  try {
+    await job();
+  } catch (error) {
+    console.error('Notification job failed:', error.message);
+  }
+};
+
+const runActivityJob = async (job) => {
+  try {
+    await job();
+  } catch (error) {
+    console.error('Activity job failed:', error.message);
+  }
+};
 
 const buildTaskFilter = (query, workspaceId) => {
   const filter = { workspaceId };
@@ -110,6 +128,38 @@ const createTask = async (req, res, next) => {
       labels: body.labels || [],
       checklist: body.checklist || [],
       createdBy: req.user._id,
+    });
+
+    await runNotificationJob(async () => {
+      if (assigneeUser?._id) {
+        await notifyTaskAssigned({
+          task,
+          actorId: req.user._id,
+          assigneeId: assigneeUser._id,
+        });
+      }
+      await notifyTaskDueSignals({
+        task,
+        actorId: req.user._id,
+        dueDateChanged: Boolean(body.dueDate),
+      });
+    });
+
+    await runActivityJob(async () => {
+      await logActivity({
+        workspaceId: workspace._id,
+        actorId: req.user._id,
+        action: 'task_created',
+        entityType: 'task',
+        entityId: task._id,
+        title: 'Task created',
+        details: task.title,
+        metadata: {
+          projectId: task.projectId ? task.projectId.toString() : null,
+          status: task.status,
+          priority: task.priority,
+        },
+      });
     });
 
     return ok(res, { task: task.toSafeObject(assigneeUser) }, 'Task created', 201);
@@ -221,6 +271,9 @@ const updateTask = async (req, res, next) => {
 
     const body = updateSchema.parse(req.body);
 
+    const previousAssigneeId = req.task.assignee;
+    const previousDueDate = req.task.dueDate;
+
     if (body.projectId !== undefined) {
       const { error: projectError } = await validateProjectInWorkspace(
         body.projectId,
@@ -260,6 +313,45 @@ const updateTask = async (req, res, next) => {
 
     await req.task.save();
 
+    await runNotificationJob(async () => {
+      const assigneeChanged = body.assignee !== undefined;
+      if (assigneeChanged && req.task.assignee) {
+        await notifyTaskAssigned({
+          task: req.task,
+          actorId: req.user._id,
+          assigneeId: req.task.assignee,
+          previousAssigneeId,
+        });
+      }
+
+      const dueDateChanged =
+        body.dueDate !== undefined &&
+        String(previousDueDate || '') !== String(req.task.dueDate || '');
+
+      await notifyTaskDueSignals({
+        task: req.task,
+        actorId: req.user._id,
+        dueDateChanged,
+      });
+    });
+
+    await runActivityJob(async () => {
+      await logActivity({
+        workspaceId: req.workspace._id,
+        actorId: req.user._id,
+        action: 'task_updated',
+        entityType: 'task',
+        entityId: req.task._id,
+        title: 'Task updated',
+        details: req.task.title,
+        metadata: {
+          status: req.task.status,
+          priority: req.task.priority,
+          projectId: req.task.projectId ? req.task.projectId.toString() : null,
+        },
+      });
+    });
+
     let assigneeUser = null;
     if (req.task.assignee) {
       assigneeUser = await User.findById(req.task.assignee);
@@ -278,8 +370,26 @@ const updateTaskStatus = async (req, res, next) => {
     }
 
     const { status } = statusSchema.parse(req.body);
+    const previousStatus = req.task.status;
     req.task.status = status;
     await req.task.save();
+
+    await runActivityJob(async () => {
+      await logActivity({
+        workspaceId: req.workspace._id,
+        actorId: req.user._id,
+        action: 'task_status_changed',
+        entityType: 'task',
+        entityId: req.task._id,
+        title: 'Task status updated',
+        details: `${req.task.title}: ${previousStatus} -> ${status}`,
+        metadata: {
+          previousStatus,
+          status,
+          projectId: req.task.projectId ? req.task.projectId.toString() : null,
+        },
+      });
+    });
 
     let assigneeUser = null;
     if (req.task.assignee) {
@@ -307,8 +417,36 @@ const assignTask = async (req, res, next) => {
       return fail(res, 400, assigneeError);
     }
 
+    const previousAssigneeId = req.task.assignee;
     req.task.assignee = assigneeUser?._id || null;
     await req.task.save();
+
+    await runNotificationJob(async () => {
+      if (req.task.assignee) {
+        await notifyTaskAssigned({
+          task: req.task,
+          actorId: req.user._id,
+          assigneeId: req.task.assignee,
+          previousAssigneeId,
+        });
+      }
+    });
+
+    await runActivityJob(async () => {
+      await logActivity({
+        workspaceId: req.workspace._id,
+        actorId: req.user._id,
+        action: 'task_assigned',
+        entityType: 'task',
+        entityId: req.task._id,
+        title: 'Task assigned',
+        details: req.task.title,
+        metadata: {
+          assigneeId: req.task.assignee ? req.task.assignee.toString() : null,
+          projectId: req.task.projectId ? req.task.projectId.toString() : null,
+        },
+      });
+    });
 
     return ok(res, { task: req.task.toSafeObject(assigneeUser) }, 'Task assigned');
   } catch (error) {
@@ -322,7 +460,26 @@ const deleteTask = async (req, res, next) => {
       return fail(res, 403, 'You do not have permission to delete this task');
     }
 
+    const taskTitle = req.task.title;
+    const taskId = req.task._id;
+    const projectId = req.task.projectId;
+
     await req.task.deleteOne();
+
+    await runActivityJob(async () => {
+      await logActivity({
+        workspaceId: req.workspace._id,
+        actorId: req.user._id,
+        action: 'task_deleted',
+        entityType: 'task',
+        entityId: taskId,
+        title: 'Task deleted',
+        details: taskTitle,
+        metadata: {
+          projectId: projectId ? projectId.toString() : null,
+        },
+      });
+    });
 
     return ok(res, null, 'Task deleted');
   } catch (error) {

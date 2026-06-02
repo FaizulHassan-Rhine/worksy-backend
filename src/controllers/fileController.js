@@ -9,6 +9,15 @@ const {
   validateFileRelations,
   deleteFileFromDisk,
 } = require('../services/fileService');
+const { logActivity } = require('../services/activityService');
+
+const runActivityJob = async (job) => {
+  try {
+    await job();
+  } catch (error) {
+    console.error('Activity job failed:', error.message);
+  }
+};
 
 const uploadMetaSchema = z.object({
   workspaceId: z.string().min(1, 'Workspace ID is required'),
@@ -56,6 +65,23 @@ const uploadFile = async (req, res, next) => {
       projectId: body.projectId || null,
       taskId: body.taskId || null,
       storageKey: req.file.filename,
+    });
+
+    await runActivityJob(async () => {
+      await logActivity({
+        workspaceId: workspace._id,
+        actorId: req.user._id,
+        action: 'file_uploaded',
+        entityType: 'file',
+        entityId: file._id,
+        title: 'File uploaded',
+        details: file.fileName,
+        metadata: {
+          projectId: file.projectId ? file.projectId.toString() : null,
+          taskId: file.taskId ? file.taskId.toString() : null,
+          fileCategory: file.fileCategory,
+        },
+      });
     });
 
     return ok(res, { file: file.toSafeObject() }, 'File uploaded', 201);
@@ -111,8 +137,29 @@ const deleteFile = async (req, res, next) => {
       return fail(res, 403, 'You do not have permission to delete this file');
     }
 
+    const fileName = req.fileRecord.fileName;
+    const fileId = req.fileRecord._id;
+    const projectId = req.fileRecord.projectId;
+    const taskId = req.fileRecord.taskId;
+
     deleteFileFromDisk(req.fileRecord.storageKey);
     await req.fileRecord.deleteOne();
+
+    await runActivityJob(async () => {
+      await logActivity({
+        workspaceId: req.workspace._id,
+        actorId: req.user._id,
+        action: 'file_deleted',
+        entityType: 'file',
+        entityId: fileId,
+        title: 'File deleted',
+        details: fileName,
+        metadata: {
+          projectId: projectId ? projectId.toString() : null,
+          taskId: taskId ? taskId.toString() : null,
+        },
+      });
+    });
 
     return ok(res, null, 'File deleted');
   } catch (error) {

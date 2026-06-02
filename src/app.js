@@ -12,6 +12,8 @@ const noteRoutes = require('./routes/noteRoutes');
 const fileRoutes = require('./routes/fileRoutes');
 const dashboardRoutes = require('./routes/dashboardRoutes');
 const messageRoutes = require('./routes/messageRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
+const savedViewRoutes = require('./routes/savedViewRoutes');
 
 const { UPLOAD_DIR, ensureUploadDir } = require('./config/upload');
 
@@ -76,6 +78,8 @@ app.get('/api', (req, res) => {
         files: '/api/files',
         dashboard: '/api/dashboard',
         messages: '/api/messages',
+        notifications: '/api/notifications',
+        savedViews: '/api/saved-views',
       },
     },
     'Worksy API'
@@ -94,6 +98,8 @@ app.use('/api/notes', noteRoutes);
 app.use('/api/files', fileRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/messages', messageRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/saved-views', savedViewRoutes);
 
 app.use(notFound);
 app.use(errorHandler);

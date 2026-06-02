@@ -6,6 +6,7 @@ const { ok, fail } = require('../utils/apiResponse');
 const { getDayBounds } = require('../utils/dateUtils');
 const { loadWorkspaceForUser } = require('../services/projectService');
 const { buildVisibilityFilter } = require('../services/noteService');
+const { getRecentActivities } = require('../services/activityService');
 
 const getDashboardStats = async (req, res, next) => {
   try {
@@ -26,11 +27,12 @@ const getDashboardStats = async (req, res, next) => {
       ...buildVisibilityFilter(req.user._id),
     };
 
-    const [tasks, projects, notes, files] = await Promise.all([
+    const [tasks, projects, notes, files, recentActivities] = await Promise.all([
       Task.find({ workspaceId: workspace._id }),
       Project.find({ workspaceId: workspace._id }),
       Note.find(noteFilter).sort({ updatedAt: -1 }).limit(5),
       FileModel.find({ workspaceId: workspace._id }).sort({ createdAt: -1 }).limit(5),
+      getRecentActivities({ workspaceId: workspace._id, limit: 8 }),
     ]);
 
     const completedTasks = tasks.filter((t) => t.status === 'done').length;
@@ -65,6 +67,7 @@ const getDashboardStats = async (req, res, next) => {
         },
         recentNotes: notes.map((n) => n.toSafeObject()),
         recentFiles: files.map((f) => f.toSafeObject()),
+        recentActivities,
       },
       'Dashboard stats fetched'
     );

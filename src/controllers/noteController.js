@@ -12,6 +12,15 @@ const {
   validateNoteTypeFields,
   buildVisibilityFilter,
 } = require('../services/noteService');
+const { logActivity } = require('../services/activityService');
+
+const runActivityJob = async (job) => {
+  try {
+    await job();
+  } catch (error) {
+    console.error('Activity job failed:', error.message);
+  }
+};
 
 const createSchema = z.object({
   title: z.string().trim().min(1, 'Title is required').max(200),
@@ -68,6 +77,22 @@ const createNote = async (req, res, next) => {
       projectId: project?._id || null,
       createdBy: req.user._id,
       isPrivate,
+    });
+
+    await runActivityJob(async () => {
+      await logActivity({
+        workspaceId: workspace._id,
+        actorId: req.user._id,
+        action: 'note_created',
+        entityType: 'note',
+        entityId: note._id,
+        title: 'Note created',
+        details: note.title,
+        metadata: {
+          type: note.type,
+          projectId: note.projectId ? note.projectId.toString() : null,
+        },
+      });
     });
 
     return ok(res, { note: note.toSafeObject() }, 'Note created', 201);
@@ -131,6 +156,22 @@ const updateNote = async (req, res, next) => {
 
     await req.note.save();
 
+    await runActivityJob(async () => {
+      await logActivity({
+        workspaceId: req.workspace._id,
+        actorId: req.user._id,
+        action: 'note_updated',
+        entityType: 'note',
+        entityId: req.note._id,
+        title: 'Note updated',
+        details: req.note.title,
+        metadata: {
+          type: req.note.type,
+          projectId: req.note.projectId ? req.note.projectId.toString() : null,
+        },
+      });
+    });
+
     return ok(res, { note: req.note.toSafeObject() }, 'Note updated');
   } catch (error) {
     next(error);
@@ -143,7 +184,27 @@ const deleteNote = async (req, res, next) => {
       return fail(res, 403, 'You do not have permission to delete this note');
     }
 
+    const noteTitle = req.note.title;
+    const noteId = req.note._id;
+    const noteType = req.note.type;
+    const projectId = req.note.projectId;
     await req.note.deleteOne();
+
+    await runActivityJob(async () => {
+      await logActivity({
+        workspaceId: req.workspace._id,
+        actorId: req.user._id,
+        action: 'note_deleted',
+        entityType: 'note',
+        entityId: noteId,
+        title: 'Note deleted',
+        details: noteTitle,
+        metadata: {
+          type: noteType,
+          projectId: projectId ? projectId.toString() : null,
+        },
+      });
+    });
 
     return ok(res, null, 'Note deleted');
   } catch (error) {
